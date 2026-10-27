@@ -25,7 +25,7 @@ function store(k, v) { try { if (v === undefined) return localStorage.getItem('o
 G.diff = store('diff') || 'normal'; if (!DIFFS[G.diff]) G.diff = 'normal';
 
 function resize() {
-  var dpr = Math.min(window.devicePixelRatio || 1, 2.5);
+  var dpr = Math.min(window.devicePixelRatio || 1, 2);
   cv.width = Math.round(innerWidth * dpr); cv.height = Math.round(innerHeight * dpr);
   SC = Math.min(cv.width / CONFIG.W, cv.height / 640);
   H = cv.height / SC; OX = (cv.width / SC - CONFIG.W) / 2;
@@ -33,6 +33,11 @@ function resize() {
   ctx.setTransform(SC, 0, 0, SC, OX * SC, 0);
 }
 addEventListener('resize', resize); resize();
+// スマホが画面を作り直したとき(記憶が足りない・アプリを切りかえた等)に、拡大と絵文字を元にもどす
+cv.addEventListener('contextlost', function (ev) { ev.preventDefault(); });
+cv.addEventListener('contextrestored', function () { resize(); atlasReset(); });
+document.addEventListener('visibilitychange', function () { if (!document.hidden) { resize(); atlasReset(); } });
+addEventListener('pageshow', function () { resize(); atlasReset(); });
 
 /* ===== 小さな道具 ===== */
 function rnd(a, b) { return a + Math.random() * (b - a); }
@@ -42,21 +47,34 @@ function proj(wx, z) {
   var s = CONFIG.D / (CONFIG.D + Math.max(z, -CONFIG.D * 0.7));
   return { x: 180 + wx * CONFIG.ROADW * s, y: HY + (BY - HY) * s, s: s };
 }
-var EC = {};
-function emoCanvas(ch) {
-  var c = EC[ch];
-  if (!c) {
-    c = document.createElement('canvas'); c.width = c.height = 120;
-    var x = c.getContext('2d'); x.font = '96px ' + EMOJI_FONT; x.textAlign = 'center'; x.textBaseline = 'middle';
-    x.fillText(ch, 60, 66); EC[ch] = c;
+/* 絵文字は 1枚の大きな画用紙(アトラス)に まとめて描いておき、そこから切り取って使う。
+   小さな画用紙を何百枚も作ると、スマホの記憶が足りなくなって 画面が白紙にされる(顔が消える・止まる)ことがあるため。
+   白紙にされたと分かったら(contextlost / 見えなくなって戻ったとき / 一定時間ごと)、まっさらにして描き直す。 */
+var ATL = { cell: 112, n: 16, c: null, x: null, map: {}, next: 0, born: 0 };
+function atlasReset() {
+  if (!ATL.c) {
+    ATL.c = document.createElement('canvas'); ATL.c.width = ATL.c.height = ATL.cell * ATL.n;
+    ATL.c.addEventListener('contextrestored', atlasReset);
   }
-  return c;
+  ATL.x = ATL.c.getContext('2d'); ATL.x.clearRect(0, 0, ATL.c.width, ATL.c.height);
+  ATL.x.font = '92px ' + EMOJI_FONT; ATL.x.textAlign = 'center'; ATL.x.textBaseline = 'middle';
+  ATL.map = {}; ATL.next = 0; ATL.born = performance.now();
 }
+function atlasCell(ch) {
+  var i = ATL.map[ch];
+  if (i == null) {
+    if (ATL.next >= ATL.n * ATL.n) atlasReset();      // いっぱいになったら まっさらにして 使う分だけ描き直す
+    i = ATL.next++; ATL.map[ch] = i;
+    ATL.x.fillText(ch, (i % ATL.n) * ATL.cell + ATL.cell / 2, Math.floor(i / ATL.n) * ATL.cell + ATL.cell / 2 + 5);
+  }
+  return i;
+}
+atlasReset();
 function emo(ch, x, y, size, rot, alpha) {
   if (!ch || size < 1) return;
-  var c = emoCanvas(ch);
+  var i = atlasCell(ch), c = ATL.cell;
   ctx.save(); ctx.translate(x, y); if (rot) ctx.rotate(rot); if (alpha != null) ctx.globalAlpha = Math.max(0, alpha);
-  ctx.drawImage(c, -size * 0.625, -size * 0.625, size * 1.25, size * 1.25); ctx.restore();
+  ctx.drawImage(ATL.c, (i % ATL.n) * c, Math.floor(i / ATL.n) * c, c, c, -size * 0.625, -size * 0.625, size * 1.25, size * 1.25); ctx.restore();
 }
 function txt(s, x, y, size, col, stroke, align, maxW) {
   ctx.font = '900 ' + size + 'px ' + FONT; ctx.textAlign = align || 'center'; ctx.textBaseline = 'middle';
@@ -670,7 +688,7 @@ function updSky(dt) {                // 空を飛ぶもの・天気
   G.skyo = G.skyo.filter(function (o) { return o.x > -80 && o.x < 440; });
   var w = A.wx;
   if (w) {
-    var want = { rain: 60, snow: 50, sakura: 26, leaf: 14, sand: 30, star: 3, bubble: 18, ember: 30 }[w] || 0;
+    var want = { rain: 45, snow: 36, sakura: 22, leaf: 12, sand: 24, star: 3, bubble: 16, ember: 24 }[w] || 0;
     while (G.wxp.length < want) {
       var p = { x: rnd(-20, 380), y: rnd(-H, 0), r: rnd(0.6, 1.4), rot: rnd(0, 6), ph: rnd(0, 6) };
       if (w === 'bubble' || w === 'ember') p.y = rnd(H, H * 2);
@@ -707,6 +725,10 @@ function autoPlay() {                // 自動で遊ぶ(画面の写真・確認
 
 /* ===== 描く ===== */
 function draw() {
+  // 毎回、拡大と描き方の設定をかけ直す(どこかで失敗しても、次の絵で元にもどるように)
+  ctx.setTransform(SC, 0, 0, SC, OX * SC, 0); ctx.globalAlpha = 1; ctx.shadowBlur = 0; ctx.globalCompositeOperation = 'source-over';
+  var lost = ATL.x && ATL.x.isContextLost && ATL.x.isContextLost();
+  if (lost || performance.now() - ATL.born > 30000) atlasReset();   // 絵文字の画用紙も 30秒ごとに描き直す(白紙にされていても戻る)
   ctx.save();
   ctx.fillStyle = '#140c2a'; ctx.fillRect(-OX - 10, -10, CONFIG.W + OX * 2 + 20, H + 20);
   if (G.state === 'title' || !G.ST) {
@@ -825,7 +847,7 @@ function drawHaz(o) {
   var p = proj(o.wx, o.z); if (p.y < HY - 2) return;
   var sz = (o.big ? 62 : 30) * p.s + 3, hop = (o.thrown || o.big) ? Math.abs(Math.sin(o.hop * 9)) * (o.big ? 8 : 22) * p.s : 0;
   if (o.fall > 0) {                   // 落ちてくる: 地面の影で 場所を知らせる
-    var k = 1 - o.fall / 420;
+    var k = clamp(1 - o.fall / 600, 0, 1);
     ctx.fillStyle = 'rgba(200,0,0,' + (0.25 + 0.3 * k) + ')'; ctx.beginPath(); ctx.ellipse(p.x, p.y, sz * 0.6 * (0.4 + k * 0.6), sz * 0.2 * (0.4 + k * 0.6), 0, 0, 6.283); ctx.fill();
     emo(o.h.e, p.x, p.y - sz * 0.38 - o.fall * p.s, sz, o.rot + o.fall * 0.02);
     return;
@@ -1086,10 +1108,12 @@ function loop(now) {
     var dt = Math.min((now - last) / 1000, 0.05); last = now;
     if ((G.state === 'play' || G.state === 'trip') && !G.paused) {
       acc += dt;
-      while (acc >= CONFIG.DT) { update(CONFIG.DT); acc -= CONFIG.DT; }
+      var steps = 0;
+      while (acc >= CONFIG.DT && steps < 4) { update(CONFIG.DT); acc -= CONFIG.DT; steps++; }
+      if (steps >= 4) acc = 0;
     }
     draw();
-  } catch (e) { console.error(e); }
+  } catch (e) { console.error(e); try { if (ctx.reset) ctx.reset(); } catch (e2) {} }   // 描き方の設定が くずれたまま残らないように
 }
 requestAnimationFrame(function (t) { last = t; loop(t); });
 // 確認用: #play / #auto(自動・無敵)/ #stage=37 / #boss / #full / #sp=3 / #w=5 / #d=1〜3(かんたん・ふつう・むずかしい)
