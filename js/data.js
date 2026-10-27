@@ -188,7 +188,7 @@ var BOSS_MOVES = ['sway', 'zig', 'hop', 'sway'];
 function makeStage(i) {
   var round = Math.floor(i / 25);                  // 何回目の登場か(0〜3)
   var ti = i % 25, ai = (i + round * 7) % 25;
-  var th = i === 99 ? FINAL_THEME : THEMES[ti], ar = AREAS[ai];
+  var th = i === 99 ? FINAL_THEME : THEMES[ti], ar = AREAS[i === 99 ? 9 : ai];
   var rank = i === 99 ? 3 : round;
   var gims = [];
   if (i > 0) {
