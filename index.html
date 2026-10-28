@@ -37,6 +37,19 @@
   @keyframes bob { from { transform: translateY(0) rotate(-6deg); } to { transform: translateY(-10px) rotate(6deg); } }
   .rules { font-size: 15px; background: rgba(255,255,255,.08); border-radius: 14px; padding: 10px 14px; text-align: left; max-width: 340px; }
   .rules b { color: #ffe066; }
+  .how { background: rgba(255,255,255,.08); border-radius: 14px; padding: 8px 12px 10px; text-align: left; max-width: 340px; width: 100%; font-size: 14px; }
+  .how-t { font-weight: 900; color: #ffe066; text-align: center; margin-bottom: 4px; }
+  .how-r { display: flex; align-items: center; gap: 10px; padding: 5px 0; border-top: 1px dashed rgba(255,255,255,.15); }
+  .how-r:nth-child(2) { border-top: 0; }
+  .how-r p { margin: 0; line-height: 1.45; }
+  .how-r b { color: #ffe066; }
+  .how-r.jump2 { flex-direction: column; align-items: flex-start; gap: 4px; background: rgba(127,224,255,.12); border-radius: 10px; padding: 6px 8px; border-top: 0; margin: 2px 0; }
+  .mini { flex: none; display: inline-flex; align-items: center; justify-content: center; min-width: 58px; height: 30px; padding: 0 6px; border-radius: 9px;
+    border: 2px solid #1b1430; box-shadow: 0 3px 0 #1b1430; color: #1b1430; font-weight: 900; font-size: 13px; }
+  .mini2 { display: flex; align-items: center; gap: 6px; } .mini2 i { font-style: normal; font-weight: 900; color: #fff36b; }
+  #bJump.air { background: #fff36b; animation: ready .35s ease-in-out infinite alternate; }
+  #bJump.used { background: #b8c8d8; }
+  #jLabel small { font-size: 10px; line-height: 1.2; }
   button { font: inherit; font-weight: 800; font-size: 20px; padding: 14px 36px; border: 3px solid #1b1430; border-radius: 999px;
     background: #ffe066; color: #1b1430; cursor: pointer; touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
   #pad { position: fixed; left: 0; right: 0; bottom: 0; padding: 0 10px calc(env(safe-area-inset-bottom) + 12px); display: flex;
@@ -70,15 +83,16 @@
   .overlay { overflow-y: auto; justify-content: flex-start; padding-top: calc(env(safe-area-inset-top) + 16px); padding-bottom: calc(env(safe-area-inset-bottom) + 16px); }
   .overlay > :first-child { margin-top: auto; } .overlay > :last-child { margin-bottom: auto; }
   @media (max-height: 640px), (max-width: 340px) {
-    .overlay { gap: 9px; padding-left: 14px; padding-right: 14px; } .big { font-size: 54px; } h1 { font-size: 30px; }
-    .rules { font-size: 13px; padding: 8px 10px; } #diffs button { font-size: 14px; } button { font-size: 18px; padding: 11px 26px; }
+    .overlay { gap: 8px; padding-left: 12px; padding-right: 12px; } .big { font-size: 54px; } h1 { font-size: 28px; }
+    #title .big { display: none; } .how-r { padding: 3px 0; }
+    .rules, .how { font-size: 12px; padding: 6px 9px; } .mini { min-width: 50px; height: 26px; font-size: 11px; } #diffs button { font-size: 14px; } button { font-size: 18px; padding: 11px 26px; }
   }
 </style>
 </head>
 <body>
 <canvas id="game"></canvas>
 <div id="pad" class="hidden">
-  <button id="bJump" class="pb" type="button">ジャンプ<small>2回で二段ジャンプ</small></button>
+  <button id="bJump" class="pb" type="button"><span id="jLabel">ジャンプ<small>空中でもう1回<br>→ 二段ジャンプ</small></span></button>
   <button id="bSp" class="pb" type="button"><span id="spFill"></span><b>必殺</b></button>
   <button id="bAtk" class="pb" type="button">杖</button>
 </div>
@@ -91,11 +105,13 @@
     <button type="button" data-d="normal">ふつう<small>つまずいたら<br>おしまい</small></button>
     <button type="button" data-d="hard">むずかしい<small>速い・多い<br>ボスが強い</small></button>
   </div>
-  <div class="rules">
-    ・指で<b>左右になぞる</b>と動く<br>
-    ・<b>「杖」を押しっぱなし</b>で物を投げる。近くの悪者は杖でぶっとばす<br>
-    ・ゲージがたまったら<b>「必殺」</b>(10種類からランダム)<br>
-    ・<b>小石・空き缶・バナナの皮</b>につまずくと終わり。<b>ジャンプ</b>でよけて!
+  <div class="how">
+    <div class="how-t">あそびかた</div>
+    <div class="how-r"><span class="mini" style="background:#e8e0ff">👆↔</span><p><b>指で左右になぞる</b>と、おばあが動く</p></div>
+    <div class="how-r"><span class="mini" style="background:#ffb347">杖</span><p><b>押しっぱなし</b>で物を投げる。近くの悪者は杖でぶっとばす</p></div>
+    <div class="how-r"><span class="mini" style="background:#7fe0ff">ジャンプ</span><p>小石・空き缶・バナナの皮は<b>ジャンプ</b>でよける。つまずくと終わり!</p></div>
+    <div class="how-r jump2"><span class="mini2"><span class="mini" style="background:#7fe0ff">ジャンプ</span><i>→</i><span class="mini" style="background:#fff36b">もう1回!</span></span><p><b>空中でもう1回押す</b>と<b>二段ジャンプ</b>。もっと高くとべて、転がってくる大きな物もこえられる</p></div>
+    <div class="how-r"><span class="mini" style="background:linear-gradient(#fff36b,#ff3d7f)">必殺</span><p>ゲージがたまったら押す。10種類から何が出るかはお楽しみ</p></div>
   </div>
   <p id="titleBest"></p>
   <div class="row"><button id="btnPlay" type="button">はじめから</button><button id="btnCont" type="button" class="sub hidden">つづきから</button></div>

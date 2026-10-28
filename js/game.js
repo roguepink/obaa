@@ -23,6 +23,8 @@ var H = 640, HY = 170, BY = 470, SC = 1, OX = 0;
 var G = { state: 'title', paused: false, auto: false, diff: 'normal' };
 function store(k, v) { try { if (v === undefined) return localStorage.getItem('obaa-' + k); localStorage.setItem('obaa-' + k, String(v)); } catch (e) {} return null; }
 G.diff = store('diff') || 'normal'; if (!DIFFS[G.diff]) G.diff = 'normal';
+G.jumpTips = +store('jumptips') || 0;   // 二段ジャンプを何回使ったか(6回までは教える)
+G.bigTip = 0; G.bigTipN = +store('bigtip') || 0;
 
 function resize() {
   var dpr = Math.min(window.devicePixelRatio || 1, 2);
@@ -297,7 +299,11 @@ document.addEventListener('visibilitychange', function () { if (document.hidden)
 function doJump() {
   if (G.state !== 'play' || G.paused) return;
   if (G.jh <= 0.5) { G.vy = CONFIG.JUMP; G.jh = 1; G.dbl = false; sfx('jump'); }
-  else if (!G.dbl) { G.vy = CONFIG.JUMP2; G.dbl = true; G.flipT = 0.45; sfx('jump2'); }   // 二段ジャンプ(くるっと回る)
+  else if (!G.dbl) {
+    G.vy = CONFIG.JUMP2; G.dbl = true; G.flipT = 0.45; sfx('jump2');
+    if (G.jumpTips < 6) { G.jumpTips++; store('jumptips', G.jumpTips); }
+    var me = proj(G.px, 0); G.fx.push({ k: 'word', x: me.x, y: BY - G.jh - 110, s: '二段ジャンプ!', t: 0, dur: 0.7, col: '#7fe0ff', sz: 18 });
+  }   // 二段ジャンプ(くるっと回る)
 }
 function doAttack() {
   if (G.state !== 'play' || G.paused) return;
@@ -370,6 +376,7 @@ function spawnFoe(wx, z, f) {
 function spawnHaz(wx, z, o) {
   var hz = { k: 'haz', wx: clamp(wx, -0.88, 0.88), z: z || CONFIG.ZFAR, h: pick(G.ST.theme.haz), rot: rnd(-0.5, 0.5), hop: 0, fall: 0, vwx: 0 };
   for (var k in o) hz[k] = o[k];
+  if (hz.big && G.bigTipN < 3 && G.state === 'play') { G.bigTip = 3; G.bigTipN++; store('bigtip', G.bigTipN); }
   if (hz.big) hz.h = pick([{ e: '🛢️', n: 'ころがるドラム缶' }, { e: '🛞', n: 'ころがるタイヤ' }, { e: '🪨', n: 'ころがる大岩' }]);
   G.objs.push(hz); return hz;
 }
@@ -494,7 +501,7 @@ function update(dt) {
   if (has('wind')) { G.wind = Math.sin(G.stageT * 0.45) * 0.38; G.px += G.wind * dt; } else G.wind = 0;
   if (Math.abs(G.px) > 0.88) { G.px = clamp(G.px, -0.88, 0.88); G.pvx *= -0.3; }
   if (G.jh > 0) { G.vy -= CONFIG.GRAV * dt; G.jh += G.vy * dt; if (G.jh <= 0) { G.jh = 0; G.vy = 0; G.dbl = false; } }
-  G.atkT -= dt; G.atkCd -= dt; G.fireCd -= dt; G.inv -= dt; G.scoldT -= dt; G.flipT -= dt; G.stumble -= dt;
+  G.atkT -= dt; G.atkCd -= dt; G.fireCd -= dt; G.bigTip -= dt; G.inv -= dt; G.scoldT -= dt; G.flipT -= dt; G.stumble -= dt;
   G.comboT -= dt; if (G.comboT <= 0) G.combo = 0;
   if (G.say) { G.say.t += dt; if (G.say.t > 1.4) G.say = null; }
   if (G.fire && G.phase !== 'clear') fire();
@@ -989,8 +996,8 @@ function drawHud() {
     var pul = 1 + Math.max(0, G.comboT - 1.9) * 1.5;
     txt(G.combo + ' れんぞく!', 348, 128, 22 * pul, '#fff36b', '#c0122f', 'right');
   }
-  if (G.si === 0 && !G.loop && G.stageT < 12) {
-    var tip = G.stageT < 4 ? '指で左右になぞって動く' : G.stageT < 8 ? '杖ボタンを押しっぱなしで 物を投げる!' : '小石はジャンプ!2回押すと二段ジャンプ';
+  if (G.si === 0 && !G.loop && G.stageT < 16 && G.jh <= 0.5) {
+    var tip = G.stageT < 4 ? '指で左右になぞって動く' : G.stageT < 8 ? '杖ボタンを押しっぱなしで 物を投げる!' : G.stageT < 12 ? '小石は ジャンプでよける!' : 'ジャンプ中に もう1回押すと 二段ジャンプ!';
     txt(tip, 180, BY + 40, 14, '#fff', '#1b1430');
   }
   if (G.banner && !(G.sp && G.sp.t < 1.3)) {
@@ -1003,6 +1010,17 @@ function drawHud() {
     if (bn.third) txt(bn.third, 180, y + 46, bn.third.length > 24 ? 10 : 12, '#bfefff', '#1b1430');
     ctx.restore();
   }
+  var js = G.jh > 0.5 ? (G.dbl ? 'used' : 'air') : 'ground';
+  if (js !== G._js) {
+    G._js = js; var jb = document.getElementById('bJump');
+    jb.classList.toggle('air', js === 'air'); jb.classList.toggle('used', js === 'used');
+    document.getElementById('jLabel').innerHTML = js === 'air' ? 'もう1回!<small>二段ジャンプ</small>' : js === 'used' ? 'ジャンプ<small>着地まで<br>待ってね</small>' : 'ジャンプ<small>空中でもう1回<br>→ 二段ジャンプ</small>';
+  }
+  // はじめの何回かは、空中で「もう1回押すと二段ジャンプ!」と教える
+  if (js === 'air' && G.jumpTips < 6 && !G.sp) {
+    txt('もう1回押すと 二段ジャンプ!', 180, BY + 52, 15, '#fff36b', '#1b1430');
+  }
+  if (G.bigTip > 0 && !G.sp) txt('大きい物は 二段ジャンプで こえよう!', 180, BY + 52, 15, '#ff9a9a', '#1b1430');
   var pct = Math.round(G.gauge / CONFIG.GAUGE_MAX * 100);
   if (pct !== G._pct) {
     G._pct = pct; document.getElementById('spFill').style.height = pct + '%';
