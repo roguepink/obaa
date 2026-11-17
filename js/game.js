@@ -36,8 +36,23 @@ function resize() {
 }
 addEventListener('resize', resize); resize();
 // スマホが画面を作り直したとき(記憶が足りない・アプリを切りかえた等)に、拡大と絵文字を元にもどす
-cv.addEventListener('contextlost', function (ev) { ev.preventDefault(); });
-cv.addEventListener('contextrestored', function () { resize(); atlasReset(); });
+// ⚠ ここで preventDefault() を呼ぶと「作り直さなくていい」の意味になり、画面が白紙のまま戻らなくなる(2026-11-17 に起きた)。呼ばない
+function bindCanvasEvents(c) { c.addEventListener('contextrestored', function () { resize(); atlasReset(); }); }
+bindCanvasEvents(cv);
+/* それでも戻らないとき(白紙のまま 1.5秒たったとき)は、新しい画面を作って差しかえる */
+var lostSince = 0;
+function canvasHealth(now) {
+  var lost = ctx.isContextLost && ctx.isContextLost();
+  if (!lost) { lostSince = 0; return; }
+  if (!lostSince) { lostSince = now; return; }
+  if (now - lostSince < 1500) return;
+  lostSince = 0;
+  try {
+    var nc = document.createElement('canvas'); nc.id = 'game';
+    cv.parentNode.replaceChild(nc, cv); cv = nc; ctx = cv.getContext('2d');
+    bindCanvasEvents(cv); bindPointer(cv); resize(); atlasReset();
+  } catch (e) {}
+}
 document.addEventListener('visibilitychange', function () { if (!document.hidden) { resize(); atlasReset(); } });
 addEventListener('pageshow', function () { resize(); atlasReset(); });
 
@@ -255,13 +270,16 @@ function updTitle() {
 /* ===== 入力: 左右になぞる・ジャンプ・杖(押しっぱなしで投げる)・必殺 ===== */
 var drag = {};
 function lx(ev) { var r = cv.getBoundingClientRect(); return (ev.clientX - r.left) / (r.width / (cv.width / SC)) - OX; }
-cv.addEventListener('pointerdown', function (ev) { drag[ev.pointerId] = lx(ev); try { cv.setPointerCapture(ev.pointerId); } catch (e) {} });
-cv.addEventListener('pointermove', function (ev) {
-  if (drag[ev.pointerId] == null || G.state !== 'play' || G.paused) return;
-  var x = lx(ev), d = (x - drag[ev.pointerId]) / CONFIG.ROADW * 1.35; drag[ev.pointerId] = x;
-  if (has('ice')) G.pvx = clamp(G.pvx + d * 9, -2.4, 2.4); else G.px = clamp(G.px + d, -0.88, 0.88);
-});
-['pointerup', 'pointercancel'].forEach(function (n) { cv.addEventListener(n, function (ev) { delete drag[ev.pointerId]; }); });
+function bindPointer(c) {            // 画面を差しかえたときも、同じ操作がきくように 関数にしてある
+  c.addEventListener('pointerdown', function (ev) { drag[ev.pointerId] = lx(ev); try { c.setPointerCapture(ev.pointerId); } catch (e) {} });
+  c.addEventListener('pointermove', function (ev) {
+    if (drag[ev.pointerId] == null || G.state !== 'play' || G.paused) return;
+    var x = lx(ev), d = (x - drag[ev.pointerId]) / CONFIG.ROADW * 1.35; drag[ev.pointerId] = x;
+    if (has('ice')) G.pvx = clamp(G.pvx + d * 9, -2.4, 2.4); else G.px = clamp(G.px + d, -0.88, 0.88);
+  });
+  ['pointerup', 'pointercancel'].forEach(function (n) { c.addEventListener(n, function (ev) { delete drag[ev.pointerId]; }); });
+}
+bindPointer(cv);
 function bindBtn(id, down, up) {
   var b = document.getElementById(id);
   b.addEventListener('pointerdown', function (ev) { ev.preventDefault(); b.classList.add('on'); down(); try { b.setPointerCapture(ev.pointerId); } catch (e) {} });
@@ -735,7 +753,7 @@ function draw() {
   // 毎回、拡大と描き方の設定をかけ直す(どこかで失敗しても、次の絵で元にもどるように)
   ctx.setTransform(SC, 0, 0, SC, OX * SC, 0); ctx.globalAlpha = 1; ctx.shadowBlur = 0; ctx.globalCompositeOperation = 'source-over';
   var lost = ATL.x && ATL.x.isContextLost && ATL.x.isContextLost();
-  if (lost || performance.now() - ATL.born > 30000) atlasReset();   // 絵文字の画用紙も 30秒ごとに描き直す(白紙にされていても戻る)
+  if (lost || performance.now() - ATL.born > 60000) atlasReset();   // 絵文字の画用紙も 60秒ごとに描き直す(白紙にされていても戻る)
   ctx.save();
   ctx.fillStyle = '#140c2a'; ctx.fillRect(-OX - 10, -10, CONFIG.W + OX * 2 + 20, H + 20);
   if (G.state === 'title' || !G.ST) {
@@ -1120,18 +1138,24 @@ function drawSpecial(sp) {
 /* ===== まわす ===== */
 var last = 0, acc = 0;
 G.roadOff = 0;
+var updErr = 0;
 function loop(now) {
   requestAnimationFrame(loop);
+  var dt = Math.min((now - last) / 1000, 0.05); last = now;
+  // 進める(失敗しても画面は消さない。続けて失敗するときは、飛んでいる物を片づけて立て直す)
   try {
-    var dt = Math.min((now - last) / 1000, 0.05); last = now;
     if ((G.state === 'play' || G.state === 'trip') && !G.paused) {
       acc += dt;
       var steps = 0;
       while (acc >= CONFIG.DT && steps < 4) { update(CONFIG.DT); acc -= CONFIG.DT; steps++; }
       if (steps >= 4) acc = 0;
     }
-    draw();
-  } catch (e) { console.error(e); try { if (ctx.reset) ctx.reset(); } catch (e2) {} }   // 描き方の設定が くずれたまま残らないように
+    updErr = 0;
+  } catch (e) {
+    console.error(e); acc = 0;
+    if (++updErr > 10) { updErr = 0; G.fx = []; G.fly = []; G.shots = []; G.sp = null; G.hitstop = 0; G.objs = (G.objs || []).filter(function (o) { return o.k === 'deco'; }); }
+  }
+  try { canvasHealth(now); draw(); } catch (e) { console.error(e); }
 }
 requestAnimationFrame(function (t) { last = t; loop(t); });
 // 確認用: #play / #auto(自動・無敵)/ #stage=37 / #boss / #full / #sp=3 / #w=5 / #d=1〜3(かんたん・ふつう・むずかしい)
